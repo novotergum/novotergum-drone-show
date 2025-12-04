@@ -145,8 +145,8 @@
     // Konfiguration
     // ========================================================================
     const TEXT = "NOVOTERGUM";
-    const DRONE_COUNT = 1000;
-    const DRONE_SIZE = 2.4;
+    const DRONE_COUNT = 1200;
+    const DRONE_SIZE = 2.0;
 
     const PHASE_SCATTER = 0;
     const PHASE_RING = 1;
@@ -198,7 +198,6 @@
     }
 
     function getPhaseDuration(ph) {
-      // längere Brand-Phasen
       switch (ph) {
         case PHASE_SCATTER:
           return 3500;
@@ -236,7 +235,6 @@
       let next = fromPhase + 1;
       if (next > PHASE_LOGO) next = PHASE_SCATTER;
       if (next === PHASE_LOGO && !logoReady) {
-        // falls Logo nicht geladen → Logo-Phase überspringen
         next = PHASE_SCATTER;
       }
       return next;
@@ -247,6 +245,15 @@
       phaseStart = performance.now();
       updatePhaseLabel();
       assignTargetsForPhase();
+    }
+
+    function shuffleInPlace(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = (Math.random() * (i + 1)) | 0;
+        const tmp = arr[i];
+        arr[i] = arr[j];
+        arr[j] = tmp;
+      }
     }
 
     // ========================================================================
@@ -345,13 +352,17 @@
         const depth = 0.5 + this.z * 0.8;
         const baseRadius = DRONE_SIZE * depth;
         const puls = 0.4 + 0.6 * Math.sin(time * 0.003 + this.phaseOffset);
-        const radius = baseRadius * (1.0 + 0.45 * puls);
+
+        // etwas kleinere Drohnen in Text/Logo-Phase für bessere Lesbarkeit
+        const phaseScale =
+          phase === PHASE_TEXT || phase === PHASE_LOGO ? 0.8 : 1.0;
+        const radius =
+          baseRadius * (0.8 + 0.4 * puls) * phaseScale;
 
         let colorA, colorB;
         if (phase === PHASE_LOGO) {
-          // Wichtig: Weiß -> Orange, damit tone=1 → Orange
           colorA = COLOR_WHITE;
-          colorB = COLOR_ORANGE;
+          colorB = COLOR_ORANGE; // tone=1 => Orange
         } else if (phase === PHASE_TEXT) {
           colorA = COLOR_SOFT;
           colorB = COLOR_WHITE;
@@ -377,18 +388,18 @@
         );
         glowGrad.addColorStop(
           0,
-          `rgba(${c.r | 0}, ${c.g | 0}, ${c.b | 0}, 0.6)`
+          `rgba(${c.r | 0}, ${c.g | 0}, ${c.b | 0}, ${
+            phase === PHASE_TEXT ? 0.45 : 0.6
+          })`
         );
         glowGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
 
-        // Glow
         ctx.globalAlpha = 0.9;
         ctx.fillStyle = glowGrad;
         ctx.beginPath();
         ctx.arc(this.x, this.y, glowRadius, 0, Math.PI * 2);
         ctx.fill();
 
-        // Kern
         ctx.globalAlpha = 1;
         ctx.fillStyle = coreColor;
         ctx.beginPath();
@@ -443,7 +454,6 @@
       const metrics = offCtx.measureText(TEXT);
       const textWidth = metrics.width;
 
-      // deutlich größer als vorher, keine harte 900px-Grenze
       const targetWidth = width * (width > 1200 ? 0.7 : 0.85);
       const ratio = targetWidth / textWidth;
       const fontSize = baseSize * ratio;
@@ -483,9 +493,10 @@
         }
       }
 
+      shuffleInPlace(pts); // damit die 1200 Drohnen gleichmäßig verteilt sind
+
       textTargets = [];
       const offsetX = (width - offCanvas.width) / 2;
-      // leicht nach oben gesetzt, damit mehr „Luft“ nach unten bleibt
       const offsetY = (height - offCanvas.height) / 2 - height * 0.02;
 
       for (const p of pts) {
@@ -500,7 +511,7 @@
     function createLogoTargets() {
       if (!logoImage) return;
 
-      const maxSize = Math.min(width, height) * 0.8; // größer & präsenter
+      const maxSize = Math.min(width, height) * 0.8;
       const ratio = Math.min(
         maxSize / logoImage.width,
         maxSize / logoImage.height
@@ -533,17 +544,22 @@
           const b = data[idx + 2];
           const a = data[idx + 3];
 
-          if (a < 80) continue;
+          if (a < 40) continue;
+
+          // HIER: Weißer Hintergrund wird explizit ignoriert
+          const isVeryWhite = r > 245 && g > 245 && b > 245;
+          if (isVeryWhite) continue;
 
           const isOrange = r > 200 && g > 120 && b < 120;
           const isDark = r < 130 && g < 130 && b < 130;
 
           let tone = 0.6;
-          if (isOrange) tone = 1.0;       // voll Orange
-          else if (isDark) tone = 0.15;   // Figur innen eher weißlich / kühl
+          if (isOrange) tone = 1.0;      // Ring / Orange
+          else if (isDark) tone = 0.15;  // dunkle Figur
           else tone = 0.4;
 
           pts.push({ x, y, tone });
+
           if (x < minX) minX = x;
           if (x > maxX) maxX = x;
           if (y < minY) minY = y;
@@ -551,7 +567,14 @@
         }
       }
 
-      // Bounding-Box des sichtbaren Logos, um es pixelgenau zu zentrieren
+      if (!pts.length) {
+        // Fallback: kein sinnvolles Sampling → einfach Ringformation verwenden
+        logoTargets = ringTargets.slice();
+        return;
+      }
+
+      shuffleInPlace(pts); // gleichmäßige Verteilung über das ganze Logo
+
       const midX = (minX + maxX) / 2;
       const midY = (minY + maxY) / 2;
       const targetCenterX = width / 2;
@@ -580,7 +603,7 @@
     }
 
     // ========================================================================
-    // Background / Bühne
+    // Hintergrund / Bühne
     // ========================================================================
     function drawBackground(time) {
       const gradient = ctx.createRadialGradient(
@@ -597,7 +620,6 @@
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, width, height);
 
-      // Tech-Grid
       ctx.save();
       ctx.globalAlpha = 0.17;
       const gridSize = 80;
@@ -619,7 +641,6 @@
 
       drawStars(time);
 
-      // Orange-Halo nur in der Logo-Phase
       if (phase === PHASE_LOGO) {
         ctx.save();
         const haloAlpha =
@@ -662,7 +683,6 @@
       handlePhaseAutoTransition(now);
       drawBackground(now);
 
-      // Additives Licht für „echten“ Glow
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
       for (const d of drones) {
@@ -692,7 +712,7 @@
     // Logo laden
     // ========================================================================
     const logoImg = new Image();
-    logoImg.src = "logo.png"; // liegt im Ordner public
+    logoImg.src = "logo.png"; // dein NOVOTERGUM-Logo im public-Ordner
     logoImg.onload = () => {
       logoImage = logoImg;
       logoReady = true;
