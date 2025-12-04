@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>NOVOTERGUM · Drone Show</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --brand-orange: #f39200;
+      --bg-dark: #040509;
+      --bg-mid: #080b14;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at top, #151929 0, #050611 55%, #000 100%);
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #f5f5f5;
+    }
+
+    body {
+      position: relative;
+    }
+
+    #droneCanvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      cursor: pointer;
+    }
+
+    .ui-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 18px 22px;
+      z-index: 10;
+    }
+
+    .ui-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      opacity: 0.85;
+    }
+
+    .ui-top .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.58);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+    }
+
+    .brand-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--brand-orange);
+      box-shadow: 0 0 18px rgba(243, 146, 0, 0.9);
+    }
+
+    .ui-top .mode {
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(243, 146, 0, 0.18), transparent);
+      border: 1px solid rgba(243, 146, 0, 0.45);
+      text-align: right;
+    }
+
+    .ui-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      font-size: 11px;
+      opacity: 0.6;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .ui-bottom span {
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .ui-bottom .hint-keys {
+      opacity: 0.75;
+    }
+
+    @media (max-width: 640px) {
+      .ui-layer {
+        padding: 12px 14px;
+      }
+      .ui-top {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .ui-bottom {
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="droneCanvas"></canvas>
+
+  <div class="ui-layer">
+    <div class="ui-top">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>NOVOTERGUM · DRONE SHOW</span>
+      </div>
+      <div class="mode" id="phaseLabel">Phase: Intro · Swarm</div>
+    </div>
+    <div class="ui-bottom">
+      <span>Klick oder SPACE: nächste Formation</span>
+      <span class="hint-keys">Formationen: Swarm → Kreis → „NOVOTERGUM“ → Logo</span>
+    </div>
+  </div>
+
+  <script>
+    // === Konfiguration =======================================================
+    const TEXT = "NOVOTERGUM";
+    const DRONE_COUNT = 900;
+    const DRONE_SIZE = 2.4;
+
+    const PHASE_SCATTER = 0;
+    const PHASE_RING = 1;
+    const PHASE_TEXT = 2;
+    const PHASE_LOGO = 3;
+
+    const COLOR_SOFT = { r: 200, g: 220, b: 255 };
+    const COLOR_ORANGE = { r: 243, g: 146, b: 0 };
+    const COLOR_WHITE = { r: 255, g: 255, b: 255 };
+    const COLOR_COOL = { r: 120, g: 190, b: 255 };
+
+    const STAR_COUNT = 140;
+
+    const canvas = document.getElementById("droneCanvas");
+    const ctx = canvas.getContext("2d");
+    const phaseLabelEl = document.getElementById("phaseLabel");
+
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    let dpr = window.devicePixelRatio || 1;
+
+    let phase = PHASE_SCATTER;
+    let phaseStart = performance.now();
+    let lastTime = phaseStart;
+
+    let drones = [];
+    let scatterTargets = [];
+    let ringTargets = [];
+    let textTargets = [];
+    let logoTargets = [];
+    let stars = [];
+
+    let logoImage = null;
+    let logoReady = false;
+
+    // === Helper: Farben & Phasen ============================================
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function mixColor(c1, c2, t) {
+      return {
+        r: lerp(c1.r, c2.r, t),
+        g: lerp(c1.g, c2.g, t),
+        b: lerp(c1.b, c2.b, t)
+      };
+    }
+
+    function getPhaseDuration(ph) {
+      switch (ph) {
+        case PHASE_SCATTER:
+          return 4500;
+        case PHASE_RING:
+          return 5000;
+        case PHASE_TEXT:
+          return 8000;
+        case PHASE_LOGO:
+          return 10000;
+        default:
+          return 5000;
+      }
+    }
+
+    function getPhaseLabel(ph) {
+      switch (ph) {
+        case PHASE_SCATTER:
+          return "Phase: Intro · Swarm";
+        case PHASE_RING:
+          return "Phase: Orbit · Kreisformation";
+        case PHASE_TEXT:
+          return "Phase: Typo · NOVOTERGUM";
+        case PHASE_LOGO:
+          return "Phase: Iconic · NOVOTERGUM Logo";
+        default:
+          return "";
+      }
+    }
+
+    function updatePhaseLabel() {
+      phaseLabelEl.textContent = getPhaseLabel(phase);
+    }
+
+    function getNextPhase(fromPhase = phase) {
+      let next = fromPhase + 1;
+      if (next > PHASE_LOGO) next = PHASE_SCATTER;
+      if (next === PHASE_LOGO && !logoReady) {
+        // Logo noch nicht geladen → überspringen
+        next = PHASE_SCATTER;
+      }
+      return next;
+    }
+
+    function setPhase(newPhase) {
+      phase = newPhase;
+      phaseStart = performance.now();
+      updatePhaseLabel();
+      assignTargetsForPhase();
+    }
+
+    // === Canvas / Resize =====================================================
+
+    function updateCanvasSize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      dpr = window.devicePixelRatio || 1;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function regenerateTargets() {
+      createScatterTargets();
+      createRingTargets();
+      createTextTargets();
+      if (logoReady) createLogoTargets();
+    }
+
+    window.addEventListener("resize", () => {
+      updateCanvasSize();
+      regenerateTargets();
+      createStars();
+      assignTargetsForPhase();
+    });
+
+    // === Sterne im Hintergrund ==============================================
+
+    function createStars() {
+      stars = [];
+      for (let i = 0; i < STAR_COUNT; i++) {
+        stars.push({
+          x: Math.random() * width,
+          y: Math.random() * height,
+          depth: 0.3 + Math.random() * 0.7,
+          phase: Math.random() * Math.PI * 2
+        });
+      }
+    }
+
+    function drawStars(time) {
+      ctx.save();
+      for (const s of stars) {
+        const twinkle = 0.4 + 0.6 * Math.sin(time * 0.004 + s.phase);
+        const alpha = 0.18 + 0.5 * twinkle * s.depth;
+        const size = 1 + 1.6 * s.depth * twinkle;
+
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // === Drone-Klasse ========================================================
+
+    class Drone {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.tx = x;
+        this.ty = y;
+        this.z = Math.random(); // pseudo Tiefe
+        this.baseSpeed = 0.7 + Math.random() * 0.3;
+        this.phaseOffset = Math.random() * Math.PI * 2;
+        this.tone = Math.random();
+        this.targetTone = this.tone;
+      }
+
+      setTarget(x, y, tone) {
+        this.tx = x;
+        this.ty = y;
+        if (typeof tone === "number") {
+          this.targetTone = tone;
+        }
+      }
+
+      update(dt, time) {
+        const speed = this.baseSpeed * dt * 4.5; // smoothing
+        this.x += (this.tx - this.x) * speed;
+        this.y += (this.ty - this.y) * speed;
+        this.tone += (this.targetTone - this.tone) * 0.08;
+
+        const jitterAmp = 0.25 + this.z * 0.7;
+        this.x += Math.sin(time * 0.004 + this.phaseOffset) * jitterAmp;
+        this.y += Math.cos(time * 0.003 + this.phaseOffset) * jitterAmp;
+      }
+
+      draw(ctx, time) {
+        const depth = 0.5 + this.z * 0.8;
+        const baseRadius = DRONE_SIZE * depth;
+        const puls = 0.4 + 0.6 * Math.sin(time * 0.003 + this.phaseOffset);
+        const radius = baseRadius * (1.0 + 0.45 * puls);
+
+        let colorA, colorB;
+        if (phase === PHASE_LOGO) {
+          colorA = COLOR_ORANGE;
+          colorB = COLOR_WHITE;
+        } else if (phase === PHASE_TEXT) {
+          colorA = COLOR_SOFT;
+          colorB = COLOR_WHITE;
+        } else if (phase === PHASE_RING) {
+          colorA = COLOR_COOL;
+          colorB = COLOR_SOFT;
+        } else {
+          colorA = COLOR_COOL;
+          colorB = COLOR_SOFT;
+        }
+
+        const c = mixColor(colorA, colorB, this.tone);
+        const coreColor = `rgb(${c.r | 0}, ${c.g | 0}, ${c.b | 0})`;
+
+        ctx.save();
+
+        // Glow
+        const glowRadius = radius * 5;
+        const glowGrad = ctx.createRadialGradient(
+          this.x,
+          this.y,
+          0,
+          this.x,
+          this.y,
+          glowRadius
+        );
+        glowGrad.addColorStop(
+          0,
+          `rgba(${c.r | 0}, ${c.g | 0}, ${c.b | 0}, 0.55)`
+        );
+        glowGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = glowGrad;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, glowRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Kern
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = coreColor;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+        ctx.stroke();
+
+        ctx.restore();
+      }
+    }
+
+    // === Formations-Ziele ====================================================
+
+    function createScatterTargets() {
+      scatterTargets = [];
+      for (let i = 0; i < DRONE_COUNT; i++) {
+        scatterTargets.push({
+          x: Math.random() * width,
+          y: height * 0.2 + Math.random() * height * 0.6,
+          tone: 0.4 + Math.random() * 0.2
+        });
+      }
+    }
+
+    function createRingTargets() {
+      ringTargets = [];
+      const radius = Math.min(width, height) * 0.33;
+      const cx = width / 2;
+      const cy = height / 2;
+      for (let i = 0; i < DRONE_COUNT; i++) {
+        const angle = (i / DRONE_COUNT) * Math.PI * 2;
+        ringTargets.push({
+          x: cx + Math.cos(angle) * radius,
+          y: cy + Math.sin(angle) * radius,
+          tone: 0.5 + 0.3 * Math.sin(angle * 2)
+        });
+      }
+    }
+
+    function createTextTargets() {
+      const offCanvas = document.createElement("canvas");
+      const offCtx = offCanvas.getContext("2d");
+
+      const baseSize = 200;
+      offCtx.font =
+        "900 " +
+        baseSize +
+        'px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      const metrics = offCtx.measureText(TEXT);
+      const textWidth = metrics.width;
+
+      const targetWidth = Math.min(width * 0.7, 900);
+      const ratio = targetWidth / textWidth;
+      const fontSize = baseSize * ratio;
+
+      const padding = 40;
+      offCanvas.width = Math.ceil(textWidth * ratio) + padding * 2;
+      offCanvas.height = Math.ceil(fontSize * 1.4) + padding * 2;
+
+      offCtx.clearRect(0, 0, offCanvas.width, offCanvas.height);
+      offCtx.fillStyle = "#ffffff";
+      offCtx.textAlign = "center";
+      offCtx.textBaseline = "middle";
+      offCtx.font =
+        "900 " +
+        fontSize +
+        'px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      offCtx.fillText(TEXT, offCanvas.width / 2, offCanvas.height / 2);
+
+      const imageData = offCtx.getImageData(
+        0,
+        0,
+        offCanvas.width,
+        offCanvas.height
+      );
+      const data = imageData.data;
+
+      const pts = [];
+      const step = 5;
+
+      for (let y = 0; y < offCanvas.height; y += step) {
+        for (let x = 0; x < offCanvas.width; x += step) {
+          const idx = (y * offCanvas.width + x) * 4;
+          const alpha = data[idx + 3];
+          if (alpha > 128) {
+            pts.push({ x, y });
+          }
+        }
+      }
+
+      textTargets = [];
+      const offsetX = (width - offCanvas.width) / 2;
+      const offsetY = (height - offCanvas.height) / 2;
+
+      for (const p of pts) {
+        textTargets.push({
+          x: p.x + offsetX,
+          y: p.y + offsetY,
+          tone: 0.65 + Math.random() * 0.25
+        });
+      }
+    }
+
+    function createLogoTargets() {
+      if (!logoImage) return;
+
+      const maxSize = Math.min(width, height) * 0.6;
+      const ratio = Math.min(
+        maxSize / logoImage.width,
+        maxSize / logoImage.height
+      );
+      const w = Math.floor(logoImage.width * ratio);
+      const h = Math.floor(logoImage.height * ratio);
+
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = w;
+      offCanvas.height = h;
+      const offCtx = offCanvas.getContext("2d");
+      offCtx.drawImage(logoImage, 0, 0, w, h);
+
+      const imgData = offCtx.getImageData(0, 0, w, h);
+      const data = imgData.data;
+
+      const pts = [];
+      const step = 3;
+
+      for (let y = 0; y < h; y += step) {
+        for (let x = 0; x < w; x += step) {
+          const idx = (y * w + x) * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const a = data[idx + 3];
+
+          if (a < 80) continue;
+
+          const isOrange = r > 200 && g > 100 && b < 120;
+          const isDark = r < 130 && g < 130 && b < 130;
+
+          let tone = 0.7;
+          if (isOrange) tone = 1.0;
+          else if (isDark) tone = 0.2;
+
+          pts.push({ x, y, tone });
+        }
+      }
+
+      const offsetX = (width - w) / 2;
+      const offsetY = (height - h) / 2;
+
+      logoTargets = pts.map((p) => ({
+        x: p.x + offsetX,
+        y: p.y + offsetY,
+        tone: p.tone
+      }));
+    }
+
+    function assignTargets(targetArray) {
+      if (!targetArray || !targetArray.length) return;
+      for (let i = 0; i < drones.length; i++) {
+        const t = targetArray[i % targetArray.length];
+        drones[i].setTarget(t.x, t.y, t.tone);
+      }
+    }
+
+    function assignTargetsForPhase() {
+      if (phase === PHASE_SCATTER) assignTargets(scatterTargets);
+      else if (phase === PHASE_RING) assignTargets(ringTargets);
+      else if (phase === PHASE_TEXT) assignTargets(textTargets);
+      else if (phase === PHASE_LOGO) assignTargets(logoTargets);
+    }
+
+    // === Hintergrund zeichnen ===============================================
+
+    function drawBackground(time) {
+      const gradient = ctx.createRadialGradient(
+        width / 2,
+        height * 0.1,
+        0,
+        width / 2,
+        height / 2,
+        Math.max(width, height)
+      );
+      gradient.addColorStop(0, "#151b2a");
+      gradient.addColorStop(0.55, "#070915");
+      gradient.addColorStop(1, "#000000");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      // Tech-Grid
+      ctx.save();
+      ctx.globalAlpha = 0.18;
+      const gridSize = 80;
+      const offset = (time * 0.015) % gridSize;
+
+      ctx.beginPath();
+      for (let x = -gridSize; x < width + gridSize; x += gridSize) {
+        ctx.moveTo(x + offset, 0);
+        ctx.lineTo(x + offset, height);
+      }
+      for (let y = -gridSize; y < height + gridSize; y += gridSize) {
+        ctx.moveTo(0, y + offset);
+        ctx.lineTo(width, y + offset);
+      }
+      ctx.strokeStyle = "#0b1220";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+
+      drawStars(time);
+    }
+
+    // === Phasen-Logik =======================================================
+
+    function handlePhaseAutoTransition(now) {
+      const elapsed = now - phaseStart;
+      const dur = getPhaseDuration(phase);
+      if (elapsed > dur) {
+        setPhase(getNextPhase());
+      }
+    }
+
+    // === Animation Loop =====================================================
+
+    function animate(now) {
+      const dt = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+
+      handlePhaseAutoTransition(now);
+      drawBackground(now);
+
+      for (const d of drones) {
+        d.update(dt, now);
+        d.draw(ctx, now);
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    // === Events für Phase-Wechsel ===========================================
+
+    canvas.addEventListener("click", () => {
+      setPhase(getNextPhase());
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space") {
+        e.preventDefault();
+        setPhase(getNextPhase());
+      }
+    });
+
+    // === Logo laden ==========================================================
+
+    const logoImg = new Image();
+    logoImg.src = "logo.png";
+    logoImg.onload = () => {
+      logoImage = logoImg;
+      logoReady = true;
+      createLogoTargets();
+      if (phase === PHASE_LOGO) {
+        assignTargetsForPhase();
+      }
+    };
+
+    // === Init ===============================================================
+
+    function init() {
+      updateCanvasSize();
+      regenerateTargets();
+      createStars();
+
+      drones = [];
+      for (let i = 0; i < DRONE_COUNT; i++) {
+        const startX = width * 0.5 + (Math.random() - 0.5) * width * 0.4;
+        const startY = height + Math.random() * height * 0.6;
+        drones.push(new Drone(startX, startY));
+      }
+
+      phase = PHASE_SCATTER;
+      phaseStart = performance.now();
+      updatePhaseLabel();
+      assignTargetsForPhase();
+
+      requestAnimationFrame((t) => {
+        lastTime = t;
+        animate(t);
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>
