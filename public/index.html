@@ -145,9 +145,10 @@
     // Konfiguration
     // ========================================================================
     const TEXT = "NOVOTERGUM";
-    const DRONE_COUNT = 1200;
-    const DRONE_SIZE = 2.0;
-
+    //const DRONE_COUNT = 1200;
+    //const DRONE_SIZE = 2.0;
+    const DRONE_COUNT = 2200;
+    const DRONE_SIZE = 1.7;
     const PHASE_SCATTER = 0;
     const PHASE_RING = 1;
     const PHASE_TEXT = 2;
@@ -377,7 +378,8 @@
         const c = mixColor(colorA, colorB, this.tone);
         const coreColor = `rgb(${c.r | 0}, ${c.g | 0}, ${c.b | 0})`;
 
-        const glowRadius = radius * 5;
+        //const glowRadius = radius * 5;
+        const glowRadius = radius * 6;
         const glowGrad = ctx.createRadialGradient(
           this.x,
           this.y,
@@ -481,7 +483,8 @@
       const data = imageData.data;
 
       const pts = [];
-      const step = 5;
+      //const step = 5;
+      const step = 4;
 
       for (let y = 0; y < offCanvas.height; y += step) {
         for (let x = 0; x < offCanvas.width; x += step) {
@@ -529,7 +532,8 @@
       const data = imgData.data;
 
       const pts = [];
-      const step = 3;
+      const step = 2;
+      //const step = 3;
 
       let minX = Infinity,
         maxX = -Infinity,
